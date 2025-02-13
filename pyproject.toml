@@ -4,7 +4,7 @@ version = "0.1.0"
 description = ""
 authors = ["Your Name <you@example.com>"]
 readme = "README.md"
-packages = [{include = "src"}]
+packages = [{include = "src", to = "gwtune"}]
 
 [tool.poetry.dependencies]
 python = ">=3.9"
@@ -22,9 +22,11 @@ sqlalchemy = "*"
 tqdm = "*"
 umap-learn = "*"
 sqlalchemy-utils = "==0.41.1"
-torch = "==2.4.1"
-torchvision = "==0.19.1"
-torchaudio = "==2.4.1"
+
+#使用先のtorchバージョンなどと競合するためコメントアウト
+#torch = "==2.4.1"
+#torchvision = "==0.19.1"
+#torchaudio = "==2.4.1"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]
