@@ -84,7 +84,8 @@ class OptimizationConfig:
         Args:
             gw_type (str, optional):
                 Type of Gromov-Wasserstein alignment. Options are "entropic_gromov_wasserstein",
-                "entropic_semirelaxed_gromov_wasserstein" and "entropic_partial_gromov_wasserstein".
+                "entropic_semirelaxed_gromov_wasserstein", "entropic_partial_gromov_wasserstein"
+                and "non_entropic_gromov_wasserstein".
                 Defaults to "entropic_gromov_wasserstein".
             eps_list (List[float], optional):
                 List of epsilon values (regularization term). Defaults to [1., 10.].
@@ -114,6 +115,7 @@ class OptimizationConfig:
                 The method to initialize transportation plan. Defaults to "random".
             n_iter (int, optional):
                 Number of initial plans evaluated in single optimization. Defaults to 1.
+                Please set this value to 1 if you use non_entropic_gromov_wasserstein.
             max_iter (int, optional):
                 Maximum number of iterations for entropic Gromov-Wasserstein alignment by POT. Defaults to 200.
             numItermax (int):
@@ -160,7 +162,19 @@ class OptimizationConfig:
 
         self.pruner_name = pruner_name
         self.pruner_params = pruner_params
-
+        
+        if gw_type == "non_entropic_gromov_wasserstein" and self.n_iter > 1:
+            warnings.warn(
+                "n_iter should be set to 1 for non_entropic_gromov_wasserstein. "
+                "Otherwise, the results will contain only one of n_iter initial matrices."
+            )
+        if gw_type == "non_entropic_gromov_wasserstein" and self.eps_log is True:
+            warnings.warn(
+                "eps_log should be False for non_entropic_gromov_wasserstein."
+                "eps_log is set to False automatically."
+                          )
+            self.eps_log = False
+        
 
 class VisualizationConfig:
     """This is an instance for sharing the parameters to make the figures of GWOT with the instance PairwiseAnalysis.

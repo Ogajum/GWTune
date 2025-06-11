@@ -69,9 +69,11 @@ class GW_Alignment:
                 Maximum number of iterations for the Sinkhorn algorithm. Defaults to 1000.
             n_iter (int, optional):
                 Number of initial plans evaluated in optimization. Defaults to 20.
+                Please set this value to 1 if you use non_entropic_gromov_wasserstein.
             gw_type (str, optional):
                 Type of Gromov-Wasserstein alignment to be used. Options are "entropic_gromov_wasserstein",
-                "entropic_semirelaxed_gromov_wasserstein", or "entropic_partial_gromov_wasserstein".
+                "entropic_semirelaxed_gromov_wasserstein", "entropic_partial_gromov_wasserstein"
+                and "non_entropic_gromov_wasserstein".
                 Defaults to "entropic_gromov_wasserstein".
             to_types (str, optional):
                 Specifies the type of data structure to be used, either "torch" or "numpy".
@@ -154,7 +156,11 @@ class GW_Alignment:
             trial (optuna.trial.Trial): The same trial object provided as input.
             eps (float):    The sampled epsilon value.
         """
-        if len(eps_list) == 2:
+        if self.gw_type == "non_entropic_gromov_wasserstein":
+            if eps_log:
+                raise ValueError("eps_log should be False for non_entropic_gromov_wasserstein.")
+            eps = trial.suggest_float("eps", 0.0, 0.0, log=eps_log)
+        elif len(eps_list) == 2:
             ep_lower, ep_upper = eps_list
             eps = trial.suggest_float("eps", ep_lower, ep_upper, log=eps_log)
         elif len(eps_list) == 3:
@@ -188,7 +194,7 @@ class GW_Alignment:
         1.  define hyperparameter (eps, T)
         """
 
-        trial, eps = self.define_eps_range(trial, eps_list, eps_log)
+        trial, eps = self.define_eps_range(trial, eps_list, eps_log)  
         trial.set_user_attr("source_size", self.source_size)
         trial.set_user_attr("target_size", self.target_size)
 
@@ -340,6 +346,12 @@ class MainGromovWasserstainComputation:
         if self.gw_type == "entropic_partial_gromov_wasserstein":
             self.tol = 1e-7
             self.m = m
+            
+        if gw_type == "non_entropic_gromov_wasserstein" and n_iter > 1:
+            warnings.warn(
+                "n_iter should be set to 1 for non_entropic_gromov_wasserstein. "
+                "Otherwise, the results will contain only one of n_iter initial matrices."
+            )
 
     # main function
     def compute_GW_with_init_plans(
@@ -378,9 +390,12 @@ class MainGromovWasserstainComputation:
                 seeds = np.random.randint(0, 100000, self.n_iter)
             else:
                 seeds = [self.fix_seed.pop(i) for i in range(self.n_iter)]
+            
+            if self.gw_type == "non_entropic_gromov_wasserstein":
+                init_mat_list = [self.init_mat_builder.make_initial_T(init_mat_plan, seed, tol = 5e-9) for seed in seeds]
+            else:
+                init_mat_list = [self.init_mat_builder.make_initial_T(init_mat_plan, seed) for seed in seeds]
                 
-            init_mat_list = [self.init_mat_builder.make_initial_T(init_mat_plan, seed) for seed in seeds]  # n_iter initial matrices
-
         elif init_mat_plan == "user_define":
             seeds = None
             init_mat_list = self.init_mat_builder.user_define_init_mat_list
@@ -585,11 +600,74 @@ class MainGromovWasserstainComputation:
 
         elif self.gw_type == "entropic_partial_gromov_wasserstein":
             logv = self.entropic_partial_gw_computation(eps, T)
+            
+        elif self.gw_type == "non_entropic_gromov_wasserstein":
+            logv = self.non_entropic_gw_computation(T)
 
         else:
             raise ValueError(f"gw type {self.gw_type} is not defined.")
 
         return logv
+    
+    def non_entropic_gw_computation(self, T: Any) -> Dict[str, Any]:
+        """Performs the non-entropic Gromov-Wasserstein alignment.
+
+        This function solve the non-entropic Gromov-Wasserstein problem.
+
+        Args:
+            T (Any):    Initial plan for Gromov-Wasserstein alignment.
+
+        Returns:
+            log (Dict[str, Any]):  A dictionary containing the optimization results.
+                                   value of 'err' is the error between first and last T.
+        """
+        # all the variable are placed on "device" here.
+        C1, C2, p, q, T = self.back_end(self.source_dist, self.target_dist, self.p, self.q, T)
+
+        err = 1
+        logv = {"err": []}
+        
+        prevT = T
+        T, log = ot.gromov.gromov_wasserstein(
+            C1, C2, p, q, 
+            G0=T,
+            loss_fun="square_loss",
+            max_iter=self.max_iter,
+            verbose=self.verbose,
+            armijo=False,
+            symmetric=None,
+            log=True,
+            tol_rel=self.tol,
+            tol_abs=self.tol
+        )
+
+
+        # if the while loop is not broken
+        logv["gw_dist"] = log["gw_dist"]
+        logv["ot"] = T
+        logv["cpt"] = len(log["loss"])
+        
+        err = self.back_end.nx.norm(T - prevT)
+        logv["err"].append(err)
+
+        # original POT function
+        if abs(self.back_end.nx.sum(T) - 1) > 1e-5:
+            warnings.warn("Solver failed to produce a transport plan (checked by original POT). ")
+            logv["gw_dist"] = float("nan")
+            logv["acc"] = float("nan")
+            return logv
+
+        # additonal part
+        if self.back_end.check_zeros(logv["ot"]):
+            logv["gw_dist"] = float("nan")
+            logv["acc"] = float("nan")
+            return logv
+
+        else:
+            pred = self.back_end.nx.argmax(logv["ot"], 1)
+            correct = (pred == self.back_end.nx.arange(len(logv["ot"]), type_as=logv["ot"])).sum()
+            logv["acc"] = correct / len(logv["ot"])
+            return logv
 
     def entropic_gw_computation(self, eps: float, T: Any) -> Dict[str, Any]:
         """Performs the entropic Gromov-Wasserstein alignment.
