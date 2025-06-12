@@ -194,7 +194,7 @@ class GW_Alignment:
         1.  define hyperparameter (eps, T)
         """
 
-        trial, eps = self.define_eps_range(trial, eps_list, eps_log)  
+        trial, eps = self.define_eps_range(trial, eps_list, eps_log)
         trial.set_user_attr("source_size", self.source_size)
         trial.set_user_attr("target_size", self.target_size)
 
@@ -657,7 +657,7 @@ class MainGromovWasserstainComputation:
             logv["acc"] = float("nan")
             return logv
 
-        # additonal part
+        # additional part
         if self.back_end.check_zeros(logv["ot"]):
             logv["gw_dist"] = float("nan")
             logv["acc"] = float("nan")
