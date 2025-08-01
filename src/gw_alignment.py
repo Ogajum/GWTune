@@ -10,6 +10,7 @@ from tqdm.auto import tqdm
 
 # warnings.simplefilter("ignore")
 from .utils.backend import Backend
+from .utils.random_generator import MonotonicallyIncreasingRNG
 from .utils.init_matrix import InitMatrix
 
 
@@ -255,6 +256,9 @@ class MainGromovWasserstainComputation:
         instance_name: Optional[str]= None,
         *,
         first_random_init_seed: Optional[int] = None,
+        mirng_min_interval: int = 1,
+        mirng_max_interval: int = 100,
+        mirng_seed: Optional[int] = None,
         tol: float = 1e-9,
         verbose: bool = False,
         m: Optional[float]=None,
@@ -286,6 +290,9 @@ class MainGromovWasserstainComputation:
                                         Options are "sinkhorn", "sinkhorn_stabilized", or "sinkhorn_epsilon_scaling".
                                         Defaults to "sinkhorn".
             first_random_init_seed (int, optional): The first seed for generating the random initial matrix.
+            mirng_min_interval (int, optional): Minimum interval for the MonotonicallyIncreasingRNG.
+            mirng_max_interval (int, optional): Maximum interval for the MonotonicallyIncreasingRNG.
+            mirng_seed (int, optional): Seed for the MonotonicallyIncreasingRNG.
             tol (float, optional):      Stop threshold on error. Defaults to 1e-9.
             verbose (bool, optional):   Print information along iterations. Defaults to False.
             m (Optional[float], optional): The number of points to be used in partial Gromov-Wasserstein alignment.
@@ -332,6 +339,18 @@ class MainGromovWasserstainComputation:
                 self.fix_seed = [i for i in range(first_random_init_seed, first_random_init_seed + fix_random_init_seed)]
             else:
                 self.fix_seed = [i for i in range(fix_random_init_seed)]
+        else:
+            if first_random_init_seed is not None:
+                self.mirng = MonotonicallyIncreasingRNG(
+                    start=first_random_init_seed,
+                    min_interval=mirng_min_interval,
+                    max_interval=mirng_max_interval,
+                    seed=mirng_seed)
+            else:
+                self.mirng = MonotonicallyIncreasingRNG(
+                    min_interval=mirng_min_interval,
+                    max_interval=mirng_max_interval,
+                    seed=mirng_seed)
 
         # sinkhorn method
         self.sinkhorn_method = sinkhorn_method
@@ -387,7 +406,7 @@ class MainGromovWasserstainComputation:
 
         elif init_mat_plan in ["random", "permutation"]:
             if self.fix_random_init_seed is None:
-                seeds = np.random.randint(0, 100000, self.n_iter)
+                seeds = self.mirng.generate(self.n_iter)
             else:
                 seeds = [self.fix_seed.pop(i) for i in range(self.n_iter)]
             
