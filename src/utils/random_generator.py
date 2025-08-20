@@ -3,7 +3,10 @@ import numpy as np
 from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 
 class MonotonicallyIncreasingRNG:
-    """Random number generator that produces monotonically increasing integers."""
+    """Random number generator that produces monotonically increasing integers.
+        The i-th integer = start + i * part_range + random_offset
+        Random offsets are drawn from a uniform distribution [0, part_range).
+    """
 
     def __init__(self, start: int = 0, part_range : int = 100, seed: Optional[int] = None):
         """Initialize the generator with a starting point and a range of uniform distribution.
