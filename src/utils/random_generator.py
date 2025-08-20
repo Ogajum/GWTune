@@ -5,17 +5,15 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 class MonotonicallyIncreasingRNG:
     """Random number generator that produces monotonically increasing integers."""
 
-    def __init__(self, start: int = 0, min_interval: int = 1, max_interval: int = 100, seed: Optional[int] = None):
-        """Initialize the generator with a starting point and interval range.
+    def __init__(self, start: int = 0, part_range : int = 100, seed: Optional[int] = None):
+        """Initialize the generator with a starting point and a range of uniform distribution.
         Args:
             start (int): The starting point for the random number generation.
-            min_interval (int): Minimum interval between consecutive random numbers.
-            max_interval (int): Maximum interval between consecutive random numbers.
+            part_range (int): uniform distribution range for the random numbers.
             seed (Optional[int]): Seed for the random number generator for reproducibility.
         """
-        self.current = start
-        self.min_interval = min_interval
-        self.max_interval = max_interval
+        self.current_part = start # the start number of current part
+        self.part_range = part_range
         self.rng = np.random.default_rng(seed)
     
     def generate(self, size: int = 1) -> np.ndarray:
@@ -25,14 +23,14 @@ class MonotonicallyIncreasingRNG:
         Returns:
             np.ndarray: An array of monotonically increasing random integers.
         """
-        intervals = self.rng.integers(self.min_interval, self.max_interval + 1, size=size)
-        random_values = self.current + np.cumsum(intervals)
-        self.current = random_values[-1]  # Update current to the last value
+        diffs = self.rng.integers(0, self.part_range, size=size)
+        random_values = self.current_part + np.arange(0, size*self.part_range, self.part_range) + diffs
+        self.current_part = self.current_part + size * self.part_range
         return random_values
     
     def set_current(self, value: int):
         """Set the current value to a specific integer."""
-        self.current = value
+        self.current_part = value
     
     def set_seed(self, seed: Optional[int]):
         """Set the seed for the random number generator."""

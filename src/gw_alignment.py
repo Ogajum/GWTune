@@ -256,8 +256,7 @@ class MainGromovWasserstainComputation:
         instance_name: Optional[str]= None,
         *,
         first_random_init_seed: Optional[int] = None,
-        mirng_min_interval: int = 1,
-        mirng_max_interval: int = 100,
+        mirng_part_range: int = 100,
         mirng_seed: Optional[int] = None,
         tol: float = 1e-9,
         verbose: bool = False,
@@ -343,13 +342,11 @@ class MainGromovWasserstainComputation:
             if first_random_init_seed is not None:
                 self.mirng = MonotonicallyIncreasingRNG(
                     start=first_random_init_seed,
-                    min_interval=mirng_min_interval,
-                    max_interval=mirng_max_interval,
+                    part_range=mirng_part_range,
                     seed=mirng_seed)
             else:
                 self.mirng = MonotonicallyIncreasingRNG(
-                    min_interval=mirng_min_interval,
-                    max_interval=mirng_max_interval,
+                    part_range=mirng_part_range,
                     seed=mirng_seed)
 
         # sinkhorn method
