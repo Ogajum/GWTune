@@ -3,6 +3,8 @@ import functools
 import os
 import warnings
 from typing import Any, Dict, Optional, List
+import time
+import pickle
 
 import numpy as np
 import optuna
@@ -38,14 +40,15 @@ class RunOptuna:
     def __init__(
         self,
         filename: str,
-        storage: str,
+        storage: str | optuna.storages.BaseStorage,
         init_mat_plan: str,
         num_trial: int,
         n_iter: int,
         n_jobs: int,
         sampler_name: str,
         pruner_name: str,
-        pruner_params: Optional[dict] = None
+        pruner_params: Optional[dict] = None,
+        path_to_pickle : Optional[str] = None
     ) -> None:
         """Initialize the RunOptuna class which serves as a utility for handling and running Optuna studies.
 
@@ -60,12 +63,14 @@ class RunOptuna:
             sampler_name (str): Name of the sampler used in optimization. Options are "random", "grid", and "tpe".
             pruner_name (str):  Name of the pruner used in optimization. Options are "hyperband", "median", and "nop".
             pruner_params (Optional[dict], optional): Additional parameters for the pruner. See Optuna's pruner page for more details. Defaults to None.
+            path_to_pickle (Optional[str], optional): Path to the pickle file for loading/saving study. Defaults to None.
         """
 
         # the path or file name to save the results.
         self.filename = filename
         self.storage = storage
         self.init_mat_plan = init_mat_plan
+        self.path_to_pickle = path_to_pickle
 
         # parameters for optuna.study
         self.num_trial = num_trial
@@ -212,7 +217,12 @@ class RunOptuna:
             warnings.filterwarnings("ignore")
 
         study.optimize(objective, self.num_trial, n_jobs=self.n_jobs)
-
+        
+        if self.path_to_pickle is not None:
+            print(f"Saving the optimized trials as a pickle file...[StartTime: {time.strftime('%Y-%m-%d %H:%M:%S')}-",end="")
+            pickle.dump(study._storage, open(self.path_to_pickle, "wb"))      
+            print(f"EndTime: {time.strftime('%Y-%m-%d %H:%M:%S')}]") 
+                
         return study
 
     def choose_sampler(self, seed: int = 42, constant_liar: bool = False, multivariate: bool = False) -> optuna.samplers.BaseSampler:
@@ -286,6 +296,19 @@ class RunOptuna:
 
         return pruner
 
+    
+
+def load_inmemory_storage(path_to_pickle:str)-> optuna.storages.InMemoryStorage:
+    """
+    Load or create an in-memory storage.
+    Args:
+        path_to_pickle (str): The path to the pickle file.
+    """
+    if not os.path.exists(path_to_pickle):
+        return optuna.storages.InMemoryStorage()
+    else:
+        with open(path_to_pickle, "rb") as f:
+            return pickle.load(f)
 
 def load_optimizer(
     save_path: Optional[str] = None,
@@ -330,9 +353,17 @@ def load_optimizer(
     if not os.path.exists(save_path):
         os.makedirs(save_path)
 
-    # create a database from the URL
-    if not database_exists(storage):
-        create_database(storage)
+    # check wheather to use in-memory-database
+    path_to_pickle = None
+    if storage is not None and storage[:9] == "inmemory":
+        # create an in-memory database
+        print("Use in-memory storage and pickle file. This storage can not be used in different python environments. Please use different storage to move the results to different environments.")
+        path_to_pickle = storage.split("inmemory:///")[-1]
+        storage : optuna.storages.InMemoryStorage = load_inmemory_storage(path_to_pickle)        
+    else:
+        # create a database from the URL
+        if not database_exists(storage):
+            create_database(storage)
 
     if method == "optuna":
         Opt = RunOptuna(
@@ -345,6 +376,7 @@ def load_optimizer(
             sampler_name,
             pruner_name,
             pruner_params,
+            path_to_pickle=path_to_pickle
         )
     else:
         raise ValueError("no implemented method.")

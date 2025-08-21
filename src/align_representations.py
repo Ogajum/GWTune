@@ -111,6 +111,9 @@ class OptimizationConfig:
             db_params (dict, optional):
                 Parameters for creating the database URL.
                 Defaults to {"drivername": "mysql", "username": "root", "password": "", "host": "localhost", "port": 3306}.
+                If you set "drivername" to "inmemory", the database is stored in memory, and saved as a pickle file.
+            save_ots_in_dict (bool, optional):
+                If True, the optimal transport matrices will be saved in a dictionary to speed up the saving process.
             init_mat_plan (str, optional):
                 The method to initialize transportation plan. Defaults to "random".
             n_iter (int, optional):
@@ -856,9 +859,10 @@ class PairwiseAnalysis:
         # Generate the URL for the database. Syntax differs for SQLite and others.
         self.storage = self.config.storage
         if self.storage is None:
-            if self.config.db_params["drivername"] == "sqlite":
+            if self.config.db_params["drivername"] == "inmemory":
+                self.storage = f"inmemory:///{self.save_path}/{self.study_name}.pkl"
+            elif self.config.db_params["drivername"] == "sqlite":
                 self.storage = f"sqlite:///{self.save_path}/{self.study_name}.db"
-
             else:
                 self.storage = URL.create(
                     database=self.study_name,
