@@ -334,7 +334,7 @@ def load_optimizer(
         save_path (str, optional): Directory where the results of optimization will be saved.
                                    If it doesn't exist, a new directory will be created.
         filename (str, optional): Name of the file where optimizer data is stored.
-        storage (str, optional): URL to the database storage.
+        storage (str, optional): URL to the database storage. "inmemory+pkl:///path/to/pickle" means the database is stored in memory and saved as a pickle file.
         init_mat_plan (str, optional): The method to be used for the initial plan. Options are "uniform",
                                        "diag", "random", "permutation" or "user_define".
         n_iter (int, optional): Number of initial plans evaluated during a single optimization. Defaults to 10.
@@ -355,10 +355,10 @@ def load_optimizer(
 
     # check wheather to use in-memory-database
     path_to_pickle = None
-    if storage is not None and storage[:9] == "inmemory":
+    if storage is not None and storage[:12] == "inmemory+pkl":
         # create an in-memory database
         print("Use in-memory storage and pickle file. This storage can not be used in different python environments. Please use different storage to move the results to different environments.")
-        path_to_pickle = storage.split("inmemory:///")[-1]
+        path_to_pickle = storage.split("inmemory+pkl:///")[-1]
         storage : optuna.storages.InMemoryStorage = load_inmemory_storage(path_to_pickle)        
     else:
         # create a database from the URL
