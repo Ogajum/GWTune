@@ -1,6 +1,7 @@
 #%%
 import math, os, gc, warnings
 from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
+import pickle
 
 import numpy as np
 import optuna
@@ -12,7 +13,17 @@ from tqdm.auto import tqdm
 from .utils.backend import Backend
 from .utils.random_generator import MonotonicallyIncreasingRNG
 from .utils.init_matrix import InitMatrix
+from .utils.gw_optimizer import load_inmemory_storage
 
+import time
+from contextlib import contextmanager
+
+@contextmanager
+def timer(name: str):
+    start = time.perf_counter()
+    yield
+    end = time.perf_counter()
+    print(f"[{name}] Elapsed time: {end - start:.4f} seconds")
 
 # %%
 class GW_Alignment:
@@ -42,6 +53,7 @@ class GW_Alignment:
         data_path: str,
         storage: str,
         study_name: str,
+        save_ots_in_dict: bool = False,
         max_iter: int = 1000,
         numItermax: int = 1000,
         n_iter: int = 20,
@@ -101,12 +113,16 @@ class GW_Alignment:
 
         self.data_path = data_path
         os.makedirs(self.data_path, exist_ok=True)
+        
+        self.save_ots_in_dict = save_ots_in_dict
+        if self.save_ots_in_dict:
+            self.load_ot_dict()
 
         self.n_iter = n_iter
         
         # check a existed database to get the best gw_loss
         try:
-            study = optuna.load_study(study_name=study_name, storage=storage)
+            study = optuna.load_study(study_name=study_name, storage=(storage if storage[:12] != "inmemory+pkl" else load_inmemory_storage(storage.split("inmemory+pkl:///")[-1]))) 
             df = study.trials_dataframe()
             min_loss = df["value"].min()
             
@@ -133,6 +149,7 @@ class GW_Alignment:
             gw_type=gw_type,
             sinkhorn_method=sinkhorn_method,
             instance_name=instance_name,
+            ot_dict = self.ot_dict if self.save_ots_in_dict else None,
             **kwargs
         )
 
@@ -190,11 +207,17 @@ class GW_Alignment:
             eps_list (List[float]): A list containing the lower and upper bounds for epsilon.
             eps_log (bool, optional): A flag to determine if the epsilon search is in logarithmic scale.
         """
-
+        
+        """
+        0. Check if the MainGromovWasserstainComputation needs pruner.
+        """
+        #with timer(f"Trial {trial.number} - Check pruner"):
+        if (not self.main_compute.need_pruner) and trial.study.pruner is not optuna.pruners.NopPruner:
+            trial.study.pruner = optuna.pruners.NopPruner()
         """
         1.  define hyperparameter (eps, T)
         """
-
+        #with timer(f"Trial {trial.number} - Define eps"):
         trial, eps = self.define_eps_range(trial, eps_list, eps_log)
         trial.set_user_attr("source_size", self.source_size)
         trial.set_user_attr("target_size", self.target_size)
@@ -202,12 +225,14 @@ class GW_Alignment:
         """
         2.  Compute GW alignment with hyperparameters defined above.
         """
+       #with timer(f"Trial {trial.number} - Compute GW alignment"):
         logv, trial = self.main_compute.compute_GW_with_init_plans(trial, eps, init_mat_plan)
 
         """
         3.  count the accuracy of alignment and save the results if computation was finished in the right way.
             If not, set the result of accuracy and gw_loss as float('nan'), respectively. This will be used as a handy marker as bad results to be removed in the evaluation analysis.
         """
+        #with timer(f"Trial {trial.number} - Save results"):
         gw = logv["ot"]
         gw_loss = logv["gw_dist"]
         iteration = logv["cpt"]
@@ -217,17 +242,46 @@ class GW_Alignment:
         if gw_loss < self.best_gw_loss:
             self.best_gw_loss = gw_loss
         
-        self.main_compute.back_end.save_computed_results(gw, self.data_path, trial.number)
+        if self.save_ots_in_dict:
+            with timer("Save OT results to dictionary"):
+                self.main_compute.back_end.add_computed_ot_to_dict(trial.number, gw)
+        else:
+            self.main_compute.back_end.save_computed_results(gw, self.data_path, trial.number)
 
         """
         4. delete unnecessary memory for next computation. If not, memory error would happen especially when using CUDA.
         """
-
-        del gw, logv
-        torch.cuda.empty_cache()
-        gc.collect()
+        #with timer(f"Trial {trial.number} - Clean up memory"):
+        if self.device == "cuda":
+            del gw, logv
+            torch.cuda.empty_cache()
+            gc.collect()
 
         return gw_loss
+    
+    @property
+    def ot_dict_pickle_path(self) -> str:
+        """Get the file path for saving the OT dictionary as a pickle file.
+
+        Returns:
+            str: The file path for the OT dictionary pickle file.
+        """
+        return os.path.join(self.data_path, "ot_dict.pkl")
+
+    def load_ot_dict(self) -> None:
+        """Load the OT dictionary from a pickle file."""
+        ot_dict_path = self.ot_dict_pickle_path
+        if os.path.exists(ot_dict_path):
+            with open(ot_dict_path, "rb") as f:
+                self.ot_dict = pickle.load(f)
+        else:
+            self.ot_dict = {}
+            
+    def save_ot_dict(self) -> None:
+        """Save the OT dictionary to a pickle file."""
+        ot_dict_path = self.ot_dict_pickle_path
+        with open(ot_dict_path, "wb") as f:
+            pickle.dump(self.ot_dict, f)
 
 class MainGromovWasserstainComputation:
     """A class responsible for the specific computations of the entropic Gromov-Wasserstein alignment.
@@ -261,6 +315,7 @@ class MainGromovWasserstainComputation:
         tol: float = 1e-9,
         verbose: bool = False,
         m: Optional[float]=None,
+        ot_dict: Optional[dict] = None
     ) -> None:
         """Initialize the Gromov-Wasserstein alignment computation object.
 
@@ -316,7 +371,7 @@ class MainGromovWasserstainComputation:
 
         self.source_dist, self.target_dist, self.p, self.q = source_dist, target_dist, p, q
         
-        self.back_end = Backend(device, to_types, data_type)
+        self.back_end = Backend(device, to_types, data_type, ot_dict=ot_dict)
         
         self.ot_row_check = np.array([1.0/len(target_dist)] * len(target_dist))
         self.ot_col_check = np.array([1.0/len(source_dist)] * len(source_dist))
@@ -354,6 +409,7 @@ class MainGromovWasserstainComputation:
         
         # gw method
         self.gw_type = gw_type
+        self.need_pruner = self.calc_need_pruner()
 
         # parameters for gw alignment
         self.verbose = verbose        
@@ -461,40 +517,45 @@ class MainGromovWasserstainComputation:
 
         pbar = tqdm(zip(init_mat_list, seeds), total=len(init_mat_list))
         pbar.set_description(f"{self.instance_name} No.{trial.number}, eps:{eps:.3e}")
+        try: #In multi-threading, tqdm may raise an error when closing.
+            for i, (init_mat, seed) in enumerate(pbar):
+                logv = self.gw_computation(eps, init_mat)
 
-        for i, (init_mat, seed) in enumerate(pbar):
-            logv = self.gw_computation(eps, init_mat)
+                if logv["gw_dist"] < best_gw_loss:
+                    best_gw_loss = logv["gw_dist"]
+                    best_logv = logv
 
-            if logv["gw_dist"] < best_gw_loss:
-                best_gw_loss = logv["gw_dist"]
-                best_logv = logv
+                    trial = self._save_results(
+                        logv["gw_dist"],
+                        logv["acc"],
+                        logv["err"][-1],
+                        trial,
+                        init_mat_plan,
+                        num_iter=i,
+                        seed=seed,
+                    )
+                    
+                    elapsed_time = pbar.format_dict["elapsed"]
+                    trial.set_user_attr("elapsed_time", elapsed_time)
 
-                trial = self._save_results(
+                self._check_pruner_should_work(
                     logv["gw_dist"],
-                    logv["acc"],
-                    logv["err"][-1],
                     trial,
                     init_mat_plan,
+                    eps,
                     num_iter=i,
-                    seed=seed,
                 )
                 
-                elapsed_time = pbar.format_dict["elapsed"]
-                trial.set_user_attr("elapsed_time", elapsed_time)
 
-            self._check_pruner_should_work(
-                logv["gw_dist"],
-                trial,
-                init_mat_plan,
-                eps,
-                num_iter=i,
-            )
-            
-
-        if math.isinf(best_gw_loss) or best_gw_loss <= 0.0 or math.isnan(best_gw_loss):
-            raise optuna.TrialPruned(
-                f"All iteration was failed with parameters: {{'eps': {eps}, 'initialize': '{init_mat_plan}'}}"
-            )
+            if math.isinf(best_gw_loss) or best_gw_loss <= 0.0 or math.isnan(best_gw_loss):
+                raise optuna.TrialPruned(
+                    f"All iteration was failed with parameters: {{'eps': {eps}, 'initialize': '{init_mat_plan}'}}"
+                )
+        except AttributeError as e:
+            if "'tqdm_asyncio' object has no attribute 'sp'" in str(e):
+                pass
+            else:
+                raise e
 
         return best_logv, trial
 
@@ -624,6 +685,19 @@ class MainGromovWasserstainComputation:
             raise ValueError(f"gw type {self.gw_type} is not defined.")
 
         return logv
+    
+    def calc_need_pruner(self) -> bool:
+        """Check if the pruner is needed for the current Gromov-Wasserstein alignment.
+
+        Returns:
+            bool: True if the pruner is needed, False otherwise.
+        """
+        if self.gw_type in ["entropic_gromov_wasserstein", "entropic_semirelaxed_gromov_wasserstein", "entropic_partial_gromov_wasserstein"]:
+            return True
+        elif self.gw_type == "non_entropic_gromov_wasserstein":
+            return False
+        else:
+            raise ValueError(f"gw type {self.gw_type} is not defined.")
     
     def non_entropic_gw_computation(self, T: Any) -> Dict[str, Any]:
         """Performs the non-entropic Gromov-Wasserstein alignment.

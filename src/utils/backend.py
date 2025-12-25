@@ -1,6 +1,5 @@
 # %%
-from typing import Any, List, Union
-
+from typing import Any, List, Union, Optional
 import numpy as np
 import ot
 import torch
@@ -21,18 +20,20 @@ class Backend():
         nx (backend module): The backend module from POT (Python Optimal Transport) corresponding to the data type.
     """
 
-    def __init__(self, device: str = 'cpu', to_types: str = 'numpy', data_type: str = 'double') -> None:
+    def __init__(self, device: str = 'cpu', to_types: str = 'numpy', data_type: str = 'double', ot_dict: Optional[dict] = None) -> None:
         """Initializes the Backend class.
 
         Args:
             device (str, optional): The device to be used for computation, either "cpu" or "cuda". Defaults to 'cpu'.
             to_types (str, optional): Specifies the data structure to be used, either 'torch' or 'numpy'. Defaults to 'numpy'.
             data_type (str, optional): Specifies the type of data to be used in computation. Defaults to 'double'.
+            save_ot_in_dict (bool, optional): Whether to save the OT matrices in a dictionary. Defaults to False.
         """
 
         self.device = device
         self.to_types = to_types
         self.data_type = data_type
+        self.ot_dict = ot_dict
 
     def __call__(self, *args) -> Union[List[Any], Any]:
         """Convert the provided data to the specified data type and device.
@@ -208,6 +209,16 @@ class Backend():
             torch.save(gw.to('cpu'), file_path + f'/gw_{number}.pt')
         elif self.to_types == 'numpy':
             np.save(file_path + f'/gw_{number}', gw)
+
+    def add_computed_ot_to_dict(self, trial_number: int, gw: Any) -> None:
+        """Add computed OT matrix to the dictionary.
+
+        Args:
+            trial_number (int): The trial number.
+            gw (Any): The computed Gromov-Wasserstein matrix.
+        """
+        if self.ot_dict is not None:
+            self.ot_dict[trial_number] = gw if self.to_types == 'numpy' else gw.cpu().numpy()
 
 
     def check_zeros(self, args: Any) -> bool:

@@ -1,6 +1,7 @@
 # %%
 import copy
 import glob
+import pickle
 import itertools
 import os
 import re
@@ -64,6 +65,7 @@ class OptimizationConfig:
             "host": "localhost",
             "port": 3306,
         },
+        save_ots_in_dict: bool = False,
         init_mat_plan: str = "random",
         user_define_init_mat_list: Union[List, None] = None,
         n_iter: int = 1,
@@ -152,6 +154,7 @@ class OptimizationConfig:
         assert (
             storage is not None or db_params is not None
         ), "storage or db_params must be provided."
+        self.save_ots_in_dict = save_ots_in_dict
 
         self.init_mat_plan = init_mat_plan
         self.n_iter = n_iter
@@ -1231,13 +1234,17 @@ class PairwiseAnalysis:
             df_trial.to_csv(self.save_path + "/" + self.instance_name + ".csv")
 
         best_trial = study.best_trial
-        ot_path = glob.glob(self.data_path + f"/gw_{best_trial.number}.*")[0]
+        if not self.config.save_ots_in_dict:
+            ot_path = glob.glob(self.data_path + f"/gw_{best_trial.number}.*")[0]
 
-        if ".npy" in ot_path:
-            OT = np.load(ot_path)
+            if ".npy" in ot_path:
+                OT = np.load(ot_path)
 
-        elif ".pt" in ot_path:
-            OT = torch.load(ot_path, weights_only=False).to("cpu").numpy()
+            elif ".pt" in ot_path:
+                OT = torch.load(ot_path, weights_only=False).to("cpu").numpy()
+        else:
+            pickle_path = os.path.join(self.data_path, f"ot_dict.pkl")
+            OT = pickle.load(open(pickle_path, "rb"))[best_trial.number]
 
         return OT
 
@@ -1302,6 +1309,7 @@ class PairwiseAnalysis:
                 n_iter=self.config.n_iter,
                 fix_random_init_seed=None if fix_random_init_seed is False else int(self.config.num_trial * self.config.n_iter),
                 device=target_device,
+                save_ots_in_dict= self.config.save_ots_in_dict,
                 gw_type=self.config.gw_type,
                 to_types=self.config.to_types,
                 data_type=self.config.data_type,
@@ -1349,6 +1357,10 @@ class PairwiseAnalysis:
                 search_space=search_space,
             )
 
+            # It is necessary to save the OT dictionary if ots are saved in a dictionary
+            if self.config.save_ots_in_dict:
+                gw.save_ot_dict()
+            
         else:
             study = opt.load_study(compute_OT=compute_OT)
 
@@ -2362,7 +2374,10 @@ class AlignRepresentations:
         for pairwise in self.pairwise_list:
             if pairwise.study_name not in drop_list:
                 continue        
-            if not sqlalchemy_utils.database_exists(pairwise.storage):
+            if pairwise.storage[:12] == "inmemory+pkl":
+                if not os.path.exists(pairwise.storage.split("inmemory+pkl:///")[-1]):
+                    continue
+            elif not sqlalchemy_utils.database_exists(pairwise.storage):
                 continue
             
             self._delete_figure(pairwise)
